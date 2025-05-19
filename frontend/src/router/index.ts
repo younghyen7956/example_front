@@ -1,21 +1,14 @@
 import { createRouter, createWebHistory, RouteRecordRaw } from 'vue-router'
 import HomeView from '../views/HomeView.vue'
+import TestRoutes from '@/front_test/router/frontTestRouter'
 
 const routes: Array<RouteRecordRaw> = [
-  {
-    path: '/',
-    name: 'home',
-    component: HomeView
-  },
-  {
-    path: '/about',
-    name: 'about',
-    // route level code-splitting
-    // this generates a separate chunk (about.[hash].js) for this route
-    // which is lazy-loaded when the route is visited.
-    component: () => import(/* webpackChunkName: "about" */ '../views/AboutView.vue')
-  }
+  { path: '/', name: 'home', component: HomeView },
+  ...TestRoutes,
 ]
+
+// 여기에 로그 추가
+// console.log('Registered routes:', routes.map(r => r.path))
 
 const router = createRouter({
   history: createWebHistory(process.env.BASE_URL),
