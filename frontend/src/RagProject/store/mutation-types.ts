@@ -1,0 +1,2 @@
+export const REQUEST_TO_FASTAPI = 'REQUEST_TO_FASTAPI'
+export const SET_RAW_DATA = "SET_RAW_DATA";

@@ -1,5 +1,5 @@
 import actions, { TestActions } from "./actions"
-import mutations, { TestMutations } from "./mutation"
+import mutations, { TestMutations } from "./mutations"
 import state, { TestState } from "./states"
 
 
