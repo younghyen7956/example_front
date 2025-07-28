@@ -1,11 +1,12 @@
 // store/mutations.ts
 import { MutationTree } from "vuex";
 import { AnotherState } from "./states";
-import { REQUEST_TO_FASTAPI, SET_RAW_DATA } from "./mutation-types";
+import { REQUEST_TO_FASTAPI, SET_RAW_DATA,SET_USER_SESSION } from "./mutation-types";
 
 export interface AnotherMutations extends MutationTree<AnotherState> {
   [REQUEST_TO_FASTAPI](state: AnotherState, chunk: string): void;
   [SET_RAW_DATA](state: AnotherState, data: string): void; // 새 뮤테이션 타입 인터페이스 추가
+  [SET_USER_SESSION](state: AnotherState, sessionId:string):void
 }
 
 const mutations: AnotherMutations = {
@@ -18,6 +19,9 @@ const mutations: AnotherMutations = {
   [SET_RAW_DATA](state, data) {
     state.rawdata = data;
   },
+  [SET_USER_SESSION](state, sessionId){
+    state.sessionId = sessionId
+  }
 };
 
 export default mutations;

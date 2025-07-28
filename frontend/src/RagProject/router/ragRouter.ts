@@ -1,4 +1,3 @@
-// src/front_test/router/frontTestRouter.ts
 import { RouteRecordRaw } from 'vue-router'
 import RagPage from '../pages/ragPage.vue'
 

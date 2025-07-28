@@ -1,22 +1,51 @@
 <template>
   <div class="stream-viewer">
+    <transition name="toast-fade">
+      <div v-if="showToast" class="toast-popup">
+        {{ toastMessage }}
+      </div>
+    </transition>
+
     <nav class="viewer-nav">
       <button @click="toggleSidebar" class="sidebar-toggle-btn">
         {{ showSidebar ? "✕" : "☰" }}
       </button>
-      <div class="nav-title">RAG를 사용한 챗봇</div>
+      <div class="nav-title">건축 설계 검증 챗봇</div>
     </nav>
+
     <div class="viewer-body">
       <transition name="sidebar-transition">
         <aside class="sidebar" v-show="showSidebar">
-          <h2>메뉴</h2>
+          <h2>예시 질문</h2>
           <ul>
-            <!-- <li><a href="#"><span>⚙️</span> 설정</a></li> -->
-            <!-- <li><a href="#"><span>📜</span> 히스토리</a></li> -->
-            <!-- <li><a href="#"><span>❓</span> 도움말</a></li> -->
+            <li>
+              <a href="#" @click.prevent="copyToClipboard('검증위원 이문찬이 제출한 검토의견 LIST 정리해줘')">
+                <span></span> 검증위원 이문찬이 제출한 검토의견 LIST 정리해줘
+              </a>
+            </li>
+            <li>
+              <a href="#" @click.prevent="copyToClipboard('55m2 AL형 고빈도 오류순으로 체크리스트 항목을 10개 만들어줘')">
+                <span></span> 55m2 AL형 고빈도 오류순으로 체크리스트 항목을 10개 만들어줘
+              </a>
+            </li>
+            <li>
+              <a href="#" @click.prevent="copyToClipboard('AA-10974m2 A형 단열 관련 수정사항 알려줘')">
+                <span></span> AA-10974m2 A형 단열 관련 수정사항 알려줘
+              </a>
+            </li>
+            <li>
+              <a href="#" @click.prevent="copyToClipboard('59AL 단위세대 평면도 욕실 관련 수정사항 알려줘')">
+                <span></span> 59AL 단위세대 평면도 욕실 관련 수정사항 알려줘
+              </a>
+            </li>
+            <li>
+              <a href="#" @click.prevent="copyToClipboard('단열제 관련 체크리스트 항목 10개 만들어줘')">
+                <span></span> 단열제 관련 체크리스트 항목 10개 만들어줘
+              </a>
+            </li>
           </ul>
           <div class="sidebar-footer">
-            </div>
+          </div>
         </aside>
       </transition>
 
@@ -33,7 +62,8 @@
             <template v-if="msg.role === 'user'">
               {{ msg.content }}
             </template>
-            <template v-else> <div class="assistant-content">
+            <template v-else>
+              <div class="assistant-content">
                 <template v-if="!msg.content.trim()">
                   <div class="loader"></div>
                 </template>
@@ -68,21 +98,47 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, nextTick } from "vue";
+import { ref, computed, watch, nextTick,onMounted } from "vue";
 import { useStore } from "vuex";
-// REQUEST_TO_FASTAPI는 액션 내부에서 chunk를 커밋할 때 사용되므로 여기서 직접 필요 없을 수 있습니다.
-// SET_RAW_DATA는 rawdata를 초기화할 때 필요합니다.
-import { SET_RAW_DATA } from "@/RagProject/store/mutation-types"; // 경로가 올바른지 확인해주세요.
+import { SET_RAW_DATA, SET_USER_SESSION} from "@/RagProject/store/mutation-types"; // 경로가 올바른지 확인해주세요.
+import { v4 as uuidv4 } from 'uuid';
 
 const store = useStore();
 const query = ref("");
 const chatBox = ref<HTMLElement | null>(null);
-const showSidebar = ref(false);
-
+const showSidebar = ref(true);
+const sessionId = computed(() => store.state.anotherModule.sessionId);
 const rawdata = computed(() => store.state.anotherModule.rawdata);
 const messages = ref<{ role: "user" | "assistant"; content: string }[]>([]);
 let currentAssistantIndex: number | null = null;
 const isStreaming = ref(false);
+
+// Toast 알림을 위한 상태
+const showToast = ref(false);
+const toastMessage = ref("");
+let toastTimer: number | undefined;
+
+onMounted(() => {
+  if (!sessionId.value) {
+    const newSessionId = uuidv4();
+    // console.log("새로운 세션 ID 생성:", newSessionId); // 디버깅용 로그
+    store.commit(`anotherModule/${SET_USER_SESSION}`, newSessionId);
+  }
+});
+
+// Toast 알림을 활성화하는 함수
+function triggerToast(message: string) {
+  if (toastTimer) {
+    clearTimeout(toastTimer);
+  }
+  
+  toastMessage.value = message;
+  showToast.value = true;
+  
+  toastTimer = window.setTimeout(() => {
+    showToast.value = false;
+  }, 2000); // 2초 후에 사라짐
+}
 
 function sanitizeAndFormatHtml(content: string): string {
   if (!content) return "";
@@ -109,6 +165,37 @@ async function scrollToBottom() {
   if (chatBox.value) chatBox.value.scrollTop = chatBox.value.scrollHeight;
 }
 
+async function copyToClipboard(text: string) {
+  query.value = text;
+  if (navigator.clipboard && window.isSecureContext) {
+    try {
+      await navigator.clipboard.writeText(text);
+      triggerToast("클립보드에 복사되었습니다!");
+    } catch (err) {
+      console.error("클립보드 복사 실패 (navigator):", err);
+      triggerToast("복사에 실패했습니다.");
+    }
+  } else {
+    // 2. 구형 방식(execCommand)으로 대체
+    const textArea = document.createElement("textarea");
+    textArea.value = text;
+    textArea.style.position = "absolute";
+    textArea.style.left = "-9999px";
+    document.body.appendChild(textArea);
+    textArea.focus();
+    textArea.select();
+    try {
+      document.execCommand('copy');
+      triggerToast("클립보드에 복사되었습니다!");
+    } catch (err) {
+      console.error("클립보드 복사 실패 (execCommand):", err);
+      triggerToast("복사에 실패했습니다.");
+    } finally {
+      document.body.removeChild(textArea);
+    }
+  }
+}
+
 watch(rawdata, async (newVal) => {
   if (currentAssistantIndex !== null && messages.value[currentAssistantIndex]) {
     messages.value[currentAssistantIndex].content = newVal;
@@ -125,29 +212,26 @@ async function startStream() {
   messages.value.push({ role: "user", content: q });
   await scrollToBottom();
 
-  // rawdata를 초기화하기 위해 SET_RAW_DATA 뮤테이션을 사용합니다.
   store.commit(`anotherModule/${SET_RAW_DATA}`, "");
 
-  // 어시스턴트 메시지 추가 (이때 content는 "" 이므로, v-if="!msg.content.trim()"에 의해 로더가 보임)
   messages.value.push({ role: "assistant", content: "" });
   currentAssistantIndex = messages.value.length - 1;
   await scrollToBottom();
 
   try {
-    // requestToFastAPI 액션은 내부적으로 (이어붙이는) REQUEST_TO_FASTAPI 뮤테이션을 사용합니다.
-    // rawdata가 위에서 비워졌으므로 새로운 내용만 추가됩니다.
-    // 스트림 데이터가 rawdata에 처음 기록되면, watch 콜백이 실행되어
-    // messages.value[currentAssistantIndex].content가 업데이트되고 로더가 사라집니다.
-    await store.dispatch("anotherModule/requestToFastAPI", q);
+    await store.dispatch("anotherModule/requestToFastAPI", {
+        query: q,
+        sessionId: sessionId.value
+    });
   } catch (error) {
     console.error("API 요청 중 오류 발생:", error);
     if (currentAssistantIndex !== null && messages.value[currentAssistantIndex]) {
-      // 오류 발생 시 로더 대신 오류 메시지 표시
       messages.value[currentAssistantIndex].content =
         "오류가 발생했습니다. 다시 시도해주세요.";
     }
   } finally {
-    isStreaming.value = false; // 버튼 상태 및 "답변 생성 중..." 텍스트 제어
+    isStreaming.value = false;
+    query.value = ""; // 질문 전송 후 입력창 비우기
   }
 }
 
@@ -224,6 +308,7 @@ const toggleSidebar = () => {
   font-size: 1.1rem;
   padding-bottom: 0.5rem;
   border-bottom: 1px solid #3a3a3c;
+  text-align: left
 }
 
 .sidebar ul {
@@ -231,6 +316,7 @@ const toggleSidebar = () => {
   padding: 0;
   margin: 0;
   flex-grow: 1;
+  text-align: left
 }
 
 .sidebar li {
@@ -242,7 +328,7 @@ const toggleSidebar = () => {
   align-items: center;
   color: #e1e1e1;
   text-decoration: none;
-  padding: 0.6rem 0.8rem;
+  padding: 0.8rem 0.6rem 0.8rem 0rem;
   border-radius: 6px;
   transition: background-color 0.2s ease, color 0.2s ease;
 }
@@ -290,13 +376,12 @@ const toggleSidebar = () => {
 
 /* 채팅 기록 */
 .chat-box {
-  display: flex;  /* 이 부분을 주석 처리하거나 유지할 수 있습니다. align-items: stretch와 함께 사용 시 효과가 있을 수 있음 */
-  flex-direction: column;  /* 위와 동일 */
+  display: flex;
+  flex-direction: column;
   flex: 1;
   overflow-y: auto;
   padding: 1.5rem;
-  background: #000; /* 이전 코드에서 이 부분이 있었으므로 유지 */
-  /* align-items: stretch; */ /* 이 부분은 자식 요소들의 너비를 부모에 맞추려 할 때 사용 */
+  background: #000;
 }
 
 /* 입력창 */
@@ -346,30 +431,30 @@ const toggleSidebar = () => {
 }
 
 /* 메시지 박스 */
-/* 메시지 박스 */
 .chat-message {
-  max-width: 75%; /* 모든 메시지의 최대 너비 */
+  max-width: 75%;
   padding: 0.8rem 1.2rem;
   margin-bottom: 0.75rem;
   border-radius: 12px;
   white-space: pre-wrap;
   word-break: break-word;
   line-height: 1.5;
-  /* width: fit-content; /* 좀 더 명시적으로 하고 싶다면 추가할 수 있지만, flex 아이템은 기본적으로 내용에 맞춤 */
 }
 
 .chat-message.user {
   background: #007aff;
   color: #fff;
-  align-self: flex-end; /* ✏️ .chat-box가 flex container일 때 오른쪽 끝으로 정렬 */
-  margin-left: auto;  /*align-self: flex-end와 함께라면 이 줄은 생략 가능하나, 유지해도 무방 */
+  align-self: flex-end;
+  margin-left: auto;
+  text-align: right;
 }
 
 .chat-message.assistant {
   background: #3a3a3c;
   color: #e1e1e1;
-  align-self: flex-start; /* 어시스턴트 메시지는 왼쪽에 정렬 */
-  margin-right: auto; /* 위와 마찬가지로 생략 가능*/
+  align-self: flex-start;
+  margin-right: auto;
+  text-align: left;
 }
 .assistant-content img {
     max-width: 100%;
@@ -380,16 +465,43 @@ const toggleSidebar = () => {
 /* 로더 애니메이션 */
 .loader {
   display: block;
-  width: 200px; /* 로더 너비 예시 */
+  width: 200px;
   height: 20px;
   background: linear-gradient(#00cc66 0 0) 0/0% no-repeat #444;
   animation: l1 2s infinite linear;
   border-radius: 4px;
-  margin: 0.5rem 0; /* 위아래 마진, 좌우는 기본값(왼쪽) */
+  margin: 0.5rem 0;
 }
 @keyframes l1 {
   100% {
     background-size: 100%;
   }
+}
+
+/* Toast 스타일 및 애니메이션 */
+.toast-popup {
+  position: fixed;
+  bottom: 2rem;
+  left: 50%;
+  transform: translateX(-50%);
+  background-color: #00cc66;
+  color: #fff;
+  padding: 0.75rem 1.5rem;
+  border-radius: 20px;
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.2);
+  z-index: 1000;
+  font-size: 0.9rem;
+  font-weight: 500;
+}
+
+.toast-fade-enter-active,
+.toast-fade-leave-active {
+  transition: opacity 0.3s ease, transform 0.3s ease;
+}
+
+.toast-fade-enter-from,
+.toast-fade-leave-to {
+  opacity: 0;
+  transform: translate(-50%, 20px);
 }
 </style>
