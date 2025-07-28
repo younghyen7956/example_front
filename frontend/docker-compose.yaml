@@ -1,0 +1,10 @@
+services:
+  frontend:
+    # build 설정을 상세하게 변경
+    build:
+      context: .
+      dockerfile: Dockerfile
+      # [핵심] .env 파일의 값을 Dockerfile의 ARG로 전달
+    container_name: vue-app-container
+    ports:
+      - "8080:8080"
