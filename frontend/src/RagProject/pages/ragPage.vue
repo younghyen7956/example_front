@@ -44,8 +44,6 @@
               </a>
             </li>
           </ul>
-          <div class="sidebar-footer">
-          </div>
         </aside>
       </transition>
 
@@ -75,22 +73,30 @@
           </div>
         </div>
 
-        <div class="input-area">
-          <input
-            v-model="query"
-            type="text"
-            placeholder="질문을 입력하세요"
-            @keyup.enter="startStream"
-            class="query-input"
-          />
-          <button
-            @click="startStream"
-            :disabled="isStreaming"
-            class="query-button"
-            :class="{ streaming: isStreaming }"
-          >
-            {{ isStreaming ? "답변 생성 중..." : "검색" }}
-          </button>
+        <div class="input-area-wrapper">
+          <div class="file-preview" v-if="previewUrl">
+            <img :src="previewUrl" alt="Image preview" />
+            <button @click="removeImage" class="remove-file-btn" title="이미지 제거">✕</button>
+          </div>
+          <div class="input-area">
+            <input type="file" @change="handleFileChange" accept="image/*" ref="fileInput" style="display: none;" />
+            <button @click="triggerFileInput" class="attach-btn" title="이미지 첨부">📎</button>
+            <input
+              v-model="query"
+              type="text"
+              placeholder="질문을 입력하세요"
+              @keyup.enter="startStream"
+              class="query-input"
+            />
+            <button
+              @click="startStream"
+              :disabled="isStreaming"
+              class="query-button"
+              :class="{ streaming: isStreaming }"
+            >
+              {{ isStreaming ? "답변 생성 중..." : "검색" }}
+            </button>
+          </div>
         </div>
       </section>
     </div>
@@ -98,143 +104,196 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, nextTick,onMounted } from "vue";
+import { ref, computed, nextTick, onMounted } from "vue";
 import { useStore } from "vuex";
-import { SET_RAW_DATA, SET_USER_SESSION} from "@/RagProject/store/mutation-types"; // 경로가 올바른지 확인해주세요.
+import { SET_USER_SESSION } from "@/RagProject/store/mutation-types";
 import { v4 as uuidv4 } from 'uuid';
 
+// --- 상태 관리 (State Management) ---
 const store = useStore();
 const query = ref("");
+const messages = ref<{ role: "user" | "assistant"; content: string }[]>([]);
+const isStreaming = ref(false);
+const sessionId = computed(() => store.state.anotherModule.sessionId);
+
+// --- UI 및 파일 관리 상태 ---
 const chatBox = ref<HTMLElement | null>(null);
 const showSidebar = ref(true);
-const sessionId = computed(() => store.state.anotherModule.sessionId);
-const rawdata = computed(() => store.state.anotherModule.rawdata);
-const messages = ref<{ role: "user" | "assistant"; content: string }[]>([]);
-let currentAssistantIndex: number | null = null;
-const isStreaming = ref(false);
+const fileInput = ref<HTMLInputElement | null>(null);
+const selectedImageFile = ref<File | null>(null);
+const previewUrl = ref<string | null>(null);
 
-// Toast 알림을 위한 상태
+// --- 토스트 알림 상태 ---
 const showToast = ref(false);
 const toastMessage = ref("");
 let toastTimer: number | undefined;
 
+// --- 라이프사이클 훅 ---
 onMounted(() => {
+  // 컴포넌트 마운트 시 세션 ID가 없으면 새로 생성합니다.
   if (!sessionId.value) {
-    const newSessionId = uuidv4();
-    // console.log("새로운 세션 ID 생성:", newSessionId); // 디버깅용 로그
-    store.commit(`anotherModule/${SET_USER_SESSION}`, newSessionId);
+    store.commit(`anotherModule/${SET_USER_SESSION}`, uuidv4());
   }
 });
 
-// Toast 알림을 활성화하는 함수
+// --- UI 헬퍼 함수 ---
+
+// 토스트 알림을 2초간 표시하는 함수
 function triggerToast(message: string) {
   if (toastTimer) {
     clearTimeout(toastTimer);
   }
-  
   toastMessage.value = message;
   showToast.value = true;
-  
   toastTimer = window.setTimeout(() => {
     showToast.value = false;
-  }, 2000); // 2초 후에 사라짐
+  }, 2000);
 }
 
+// 텍스트를 HTML로 안전하게 변환하고 마크다운 서식을 적용하는 함수
 function sanitizeAndFormatHtml(content: string): string {
   if (!content) return "";
   let formatted = content
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&amp;/g, "&")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'");
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+
   formatted = formatted
-    .replace(/\.\s*(\d+\.)/g, ".<br><br>$1")
-    .replace(/:\s*([가-힣])/g, ":<br>$1")
-    .replace(/<br\s*\/?>/gi, "<br>")
-    .replace(/(<br>){3,}/gi, "<br><br>");
-  formatted = formatted
-    .replace(/<\/?strong>/gi, (m) => m.toLowerCase())
-    .replace(/<strong><strong>/gi, "<strong>")
-    .replace(/<\/strong><\/strong>/gi, "</strong>");
-  return formatted.replace(/^<br>+/, "").replace(/<br>+$/, "").trim();
+    .replace(/\n/g, '<br>') // 줄바꿈을 <br>로
+    .replace(/(\*\*|__)(.*?)\1/g, '<strong>$2</strong>') // **bold** -> <strong>
+    .replace(/(\*|_)(.*?)\1/g, '<em>$2</em>'); // *italic* -> <em>
+
+  return formatted;
 }
 
+// 채팅창을 맨 아래로 스크롤하는 함수
 async function scrollToBottom() {
-  await nextTick();
-  if (chatBox.value) chatBox.value.scrollTop = chatBox.value.scrollHeight;
+  await nextTick(); // DOM 업데이트를 기다립니다.
+  if (chatBox.value) {
+    chatBox.value.scrollTop = chatBox.value.scrollHeight;
+  }
 }
 
+// 텍스트를 클립보드에 복사하는 함수
 async function copyToClipboard(text: string) {
   query.value = text;
   if (navigator.clipboard && window.isSecureContext) {
     try {
       await navigator.clipboard.writeText(text);
       triggerToast("클립보드에 복사되었습니다!");
+      return;
     } catch (err) {
       console.error("클립보드 복사 실패 (navigator):", err);
-      triggerToast("복사에 실패했습니다.");
     }
-  } else {
-    // 2. 구형 방식(execCommand)으로 대체
-    const textArea = document.createElement("textarea");
-    textArea.value = text;
-    textArea.style.position = "absolute";
-    textArea.style.left = "-9999px";
-    document.body.appendChild(textArea);
-    textArea.focus();
-    textArea.select();
-    try {
-      document.execCommand('copy');
-      triggerToast("클립보드에 복사되었습니다!");
-    } catch (err) {
-      console.error("클립보드 복사 실패 (execCommand):", err);
-      triggerToast("복사에 실패했습니다.");
-    } finally {
-      document.body.removeChild(textArea);
-    }
+  }
+
+  // navigator.clipboard를 사용할 수 없는 경우를 위한 대체 로직
+  const textArea = document.createElement("textarea");
+  textArea.value = text;
+  textArea.style.position = "absolute";
+  textArea.style.left = "-9999px";
+  document.body.appendChild(textArea);
+  textArea.focus();
+  textArea.select();
+  try {
+    document.execCommand('copy');
+    triggerToast("클립보드에 복사되었습니다!");
+  } catch (err) {
+    console.error("클립보드 복사 실패 (execCommand):", err);
+    triggerToast("복사에 실패했습니다.");
+  } finally {
+    document.body.removeChild(textArea);
   }
 }
 
-watch(rawdata, async (newVal) => {
-  if (currentAssistantIndex !== null && messages.value[currentAssistantIndex]) {
-    messages.value[currentAssistantIndex].content = newVal;
-    await scrollToBottom();
-  }
-});
 
+// --- 파일 및 입력 관련 함수 ---
+
+// 숨겨진 파일 입력(input)을 클릭하는 함수
+const triggerFileInput = () => {
+    fileInput.value?.click();
+};
+
+// 파일이 선택되었을 때 호출되는 함수
+const handleFileChange = (event: Event) => {
+    const target = event.target as HTMLInputElement;
+    const file = target.files?.[0];
+    if (file) {
+        selectedImageFile.value = file;
+        previewUrl.value = URL.createObjectURL(file); // 미리보기 URL 생성
+    }
+};
+
+// 첨부된 이미지를 제거하는 함수
+const removeImage = () => {
+    selectedImageFile.value = null;
+    if (previewUrl.value) {
+        URL.revokeObjectURL(previewUrl.value); // 메모리 누수 방지
+    }
+    previewUrl.value = null;
+    if (fileInput.value) {
+        fileInput.value.value = ''; // input의 값 초기화
+    }
+};
+
+// --- 핵심 로직: 스트리밍 시작 ---
 async function startStream() {
   if (!query.value.trim() || isStreaming.value) return;
-  const q = query.value.trim();
-  query.value = "";
-  isStreaming.value = true;
 
+  const q = query.value.trim();
+  const imageFile = selectedImageFile.value;
+
+  isStreaming.value = true;
+  
+  // 1. 사용자 메시지를 채팅창에 추가
   messages.value.push({ role: "user", content: q });
   await scrollToBottom();
 
-  store.commit(`anotherModule/${SET_RAW_DATA}`, "");
-
+  // 2. 답변을 받을 비어있는 assistant 메시지 공간 생성
   messages.value.push({ role: "assistant", content: "" });
-  currentAssistantIndex = messages.value.length - 1;
+  const currentAssistantIndex = messages.value.length - 1;
   await scrollToBottom();
 
+  // 3. 토큰을 실시간으로 이어 붙여줄 콜백 함수 정의
+  const onToken = (token: string) => {
+    if (messages.value[currentAssistantIndex]) {
+      messages.value[currentAssistantIndex].content += token;
+      scrollToBottom(); // 토큰이 추가될 때마다 부드럽게 스크롤
+    }
+  };
+
   try {
-    await store.dispatch("anotherModule/requestToFastAPI", {
+    // 4. 이미지 존재 여부에 따라 적절한 Vuex 액션을 호출 (콜백 함수 전달)
+    if (imageFile) {
+      await store.dispatch("anotherModule/requestToVlFastAPI", {
         query: q,
-        sessionId: sessionId.value
-    });
+        sessionId: sessionId.value,
+        imageFile: imageFile,
+        onToken: onToken 
+      });
+    } else {
+      await store.dispatch("anotherModule/requestToTextFastAPI", {
+        query: q,
+        sessionId: sessionId.value,
+        onToken: onToken
+      });
+    }
   } catch (error) {
     console.error("API 요청 중 오류 발생:", error);
-    if (currentAssistantIndex !== null && messages.value[currentAssistantIndex]) {
-      messages.value[currentAssistantIndex].content =
-        "오류가 발생했습니다. 다시 시도해주세요.";
+    if (messages.value[currentAssistantIndex]) {
+      messages.value[currentAssistantIndex].content = "오류가 발생했습니다. 다시 시도해주세요.";
     }
   } finally {
+    // 5. 스트리밍 종료 후 상태 초기화
     isStreaming.value = false;
-    query.value = ""; // 질문 전송 후 입력창 비우기
+    query.value = "";
+    removeImage();
   }
 }
 
+// 사이드바 토글 함수
 const toggleSidebar = () => {
   showSidebar.value = !showSidebar.value;
 };
@@ -250,9 +309,10 @@ const toggleSidebar = () => {
   background: #1c1c1e;
   color: #e1e1e1;
   overflow: hidden;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
 }
 
-/* 네비바: 타이틀 + 토글 */
+/* 네비바 */
 .viewer-nav {
   display: flex;
   align-items: center;
@@ -261,7 +321,6 @@ const toggleSidebar = () => {
   border-bottom: 1px solid #3a3a3c;
   flex-shrink: 0;
 }
-
 .sidebar-toggle-btn {
   background: none;
   border: none;
@@ -270,146 +329,146 @@ const toggleSidebar = () => {
   cursor: pointer;
   padding: 0.25rem 0.5rem;
   margin-right: 1rem;
-  line-height: 1;
 }
-.sidebar-toggle-btn:hover {
-  color: #00e673;
-}
-
 .nav-title {
   font-size: 1.25rem;
   font-weight: bold;
   color: #00cc66;
 }
 
-/* 본문: 사이드바 + 채팅 영역 */
+/* 본문 */
 .viewer-body {
   display: flex;
   flex: 1;
-  width: 100%;
   overflow: hidden;
 }
-
-/* 사이드바 */
 .sidebar {
-  width: 250px;
+  width: 280px;
   background: #2c2c2e;
   padding: 1.5rem 1rem;
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
-  transition: width 0.3s ease, padding 0.3s ease, opacity 0.3s ease;
+  transition: transform 0.3s ease;
+  text-align: left;
 }
-
 .sidebar h2 {
   margin: 0 0 1rem;
   color: #00cc66;
   font-size: 1.1rem;
-  padding-bottom: 0.5rem;
-  border-bottom: 1px solid #3a3a3c;
-  text-align: left
+  text-align: center;
 }
-
 .sidebar ul {
   list-style: none;
   padding: 0;
   margin: 0;
-  flex-grow: 1;
-  text-align: left
 }
-
-.sidebar li {
-  margin-bottom: 0.25rem;
-}
-
 .sidebar li a {
-  display: flex;
-  align-items: center;
   color: #e1e1e1;
   text-decoration: none;
-  padding: 0.8rem 0.6rem 0.8rem 0rem;
+  padding: 0.8rem;
   border-radius: 6px;
-  transition: background-color 0.2s ease, color 0.2s ease;
+  display: block;
+  transition: background-color 0.2s ease;
 }
 .sidebar li a:hover {
   background-color: #3a3a3c;
-  color: #fff;
 }
-.sidebar li a span {
-  margin-right: 0.8rem;
-  font-size: 1.2rem;
-}
-
-.sidebar-footer {
-  margin-top: auto;
-  padding-top: 1rem;
-  border-top: 1px solid #3a3a3c;
-  font-size: 0.8rem;
-  color: #888;
-}
-
-.sidebar-transition-enter-active,
-.sidebar-transition-leave-active {
-  transition: transform 0.3s ease, opacity 0.3s ease;
-}
-.sidebar-transition-enter-from,
-.sidebar-transition-leave-to {
-  transform: translateX(-100%);
-  opacity: 0;
-}
-.sidebar-transition-enter-to,
-.sidebar-transition-leave-from {
-  transform: translateX(0);
-  opacity: 1;
-}
-
-/* 채팅 컨테이너 */
 .chat-container {
   flex: 1;
   display: flex;
   flex-direction: column;
-  transition: margin-left 0.3s ease;
-  background-color: #1c1c1e;
-  overflow: hidden;
+  background-color: #121212;
 }
 
-/* 채팅 기록 */
+/* 채팅창 */
 .chat-box {
-  display: flex;
-  flex-direction: column;
   flex: 1;
   overflow-y: auto;
   padding: 1.5rem;
-  background: #000;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+.chat-message {
+  max-width: 75%;
+  padding: 0.8rem 1.2rem;
+  margin-bottom: 0.75rem;
+  border-radius: 18px;
+  line-height: 1.5;
+  word-break: break-word;
+}
+.chat-message.user {
+  background: #007aff;
+  color: #fff;
+  align-self: flex-end;
+  text-align: right;
+}
+.chat-message.assistant {
+  background: #3a3a3c;
+  color: #e1e1e1;
+  align-self: flex-start;
+  text-align: left;
 }
 
-/* 입력창 */
-.input-area {
-  display: flex;
+/* 입력 영역 Wrapper */
+.input-area-wrapper {
   padding: 1rem;
   border-top: 1px solid #3a3a3c;
   background: #2c2c2e;
-  width: 100%;
-  box-sizing: border-box;
   flex-shrink: 0;
+}
+.file-preview {
+  display: inline-flex;
+  align-items: center;
+  margin-bottom: 0.75rem;
+  background: #3a3a3c;
+  padding: 0.5rem;
+  border-radius: 8px;
+}
+.file-preview img {
+  max-height: 50px;
+  max-width: 100px;
+  border-radius: 4px;
+  margin-right: 0.75rem;
+}
+.remove-file-btn {
+  background: #555;
+  color: #fff;
+  border: none;
+  border-radius: 50%;
+  width: 20px;
+  height: 20px;
+  cursor: pointer;
+  line-height: 20px;
+  text-align: center;
+}
+.input-area {
+  display: flex;
+  align-items: center;
+}
+.attach-btn {
+  background: none;
+  border: none;
+  color: #888;
+  font-size: 1.5rem;
+  cursor: pointer;
+  padding: 0.5rem;
+  margin-right: 0.5rem;
+}
+.attach-btn:hover {
+  color: #e1e1e1;
 }
 .query-input {
   flex: 1;
   padding: 0.75rem 1rem;
-  margin-right: 0.75rem;
-  background: #121212;
+  background: #1c1c1e;
   border: 1px solid #4a4a4c;
   border-radius: 8px;
   color: #e1e1e1;
   font-size: 1rem;
 }
-.query-input:focus {
-  outline: none;
-  border-color: #00cc66;
-  box-shadow: 0 0 0 2px rgba(0, 204, 102, 0.3);
-}
-
 .query-button {
   padding: 0.75rem 1.25rem;
   background: #00cc66;
@@ -418,90 +477,30 @@ const toggleSidebar = () => {
   color: #fff;
   font-weight: 500;
   cursor: pointer;
+  margin-left: 0.75rem;
   transition: background-color 0.2s ease;
 }
-.query-button:hover:not(:disabled) {
-  background: #00b359;
-}
-.query-button.streaming,
 .query-button:disabled {
   background: #555;
-  color: #999;
   cursor: not-allowed;
 }
 
-/* 메시지 박스 */
-.chat-message {
-  max-width: 75%;
-  padding: 0.8rem 1.2rem;
-  margin-bottom: 0.75rem;
-  border-radius: 12px;
-  white-space: pre-wrap;
-  word-break: break-word;
-  line-height: 1.5;
-}
-
-.chat-message.user {
-  background: #007aff;
-  color: #fff;
-  align-self: flex-end;
-  margin-left: auto;
-  text-align: right;
-}
-
-.chat-message.assistant {
-  background: #3a3a3c;
-  color: #e1e1e1;
-  align-self: flex-start;
-  margin-right: auto;
-  text-align: left;
-}
-.assistant-content img {
-    max-width: 100%;
-    height: auto;
-    border-radius: 8px;
-}
-
-/* 로더 애니메이션 */
+/* 로더 */
 .loader {
-  display: block;
-  width: 200px;
+  width: 40px;
   height: 20px;
-  background: linear-gradient(#00cc66 0 0) 0/0% no-repeat #444;
-  animation: l1 2s infinite linear;
-  border-radius: 4px;
-  margin: 0.5rem 0;
+  background:
+    radial-gradient(circle closest-side,#00cc66 90%,#0000) 0%    50%,
+    radial-gradient(circle closest-side,#00cc66 90%,#0000) 50%  50%,
+    radial-gradient(circle closest-side,#00cc66 90%,#0000) 100% 50%;
+  background-size: calc(100%/3) 100%;
+  background-repeat: no-repeat;
+  animation: l16 1s infinite linear;
 }
-@keyframes l1 {
-  100% {
-    background-size: 100%;
-  }
-}
-
-/* Toast 스타일 및 애니메이션 */
-.toast-popup {
-  position: fixed;
-  bottom: 2rem;
-  left: 50%;
-  transform: translateX(-50%);
-  background-color: #00cc66;
-  color: #fff;
-  padding: 0.75rem 1.5rem;
-  border-radius: 20px;
-  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.2);
-  z-index: 1000;
-  font-size: 0.9rem;
-  font-weight: 500;
-}
-
-.toast-fade-enter-active,
-.toast-fade-leave-active {
-  transition: opacity 0.3s ease, transform 0.3s ease;
-}
-
-.toast-fade-enter-from,
-.toast-fade-leave-to {
-  opacity: 0;
-  transform: translate(-50%, 20px);
+@keyframes l16 {
+  20%{background-position:0%    50%, 50%  50%, 100% 50%}
+  40%{background-position:0%    50%, 50%  50%, 100% 50%}
+  60%{background-position:0%    50%, 50%  50%, 100% 50%}
+  80%{background-position:0%    50%, 50%  50%, 100% 50%}
 }
 </style>
